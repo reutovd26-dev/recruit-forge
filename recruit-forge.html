@@ -2883,6 +2883,43 @@ body.touch-mode .ci{min-height:44px}
       .ds-wrap.compact .ds-item-body p { display: none; }
       .ds-wrap.no-rules .ds-desc { display: none; }
       @media print { .ds-sheet { box-shadow: none; border: 0; } .ds-ctrl, .ds-add { display: none !important; } }
+
+      /* ===== Iteration 7: читаемость оболочки и листов ===== */
+      /* Панель слева НЕ должна прятать имена персонажей на ноутбуках (1200–1599px). */
+      @media (min-width: 900px) and (max-width: 1599px) {
+        #palette { width: 210px; }
+        #palette .pal-item { justify-content: flex-start; padding: 7px 9px; }
+        #palette .pal-item > span:last-child { display: block; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
+        #palette .pal-item .sw { width: 12px; height: 12px; flex-shrink: 0; }
+        #palette .pal-search { padding: 7px; }
+        #palette .pal-search input { font-size: 12px; padding: 6px 8px; }
+        #palette h4 { font-size: 11px; height: auto; padding: 9px 9px 4px; }
+        #btn-palette { display: none; }
+      }
+      /* Строки списка персонажей: ровная высота, перенос длинных имён, без налезания. */
+      #palette .pal-item { min-height: 32px; align-items: center; gap: 8px; }
+      #palette .pal-item > span:last-child { white-space: normal; }
+      /* Тулбар и нижняя панель: ничего не обрезается — перенос/прокрутка. */
+      #toolbar { flex-wrap: wrap; row-gap: 4px; }
+      #toolbar .grp { flex-wrap: wrap; row-gap: 4px; }
+      #ctrlpanel { overflow-x: auto; overflow-y: hidden; }
+      #ctrlpanel .ctrl-row, #ctrlpanel > div { flex-wrap: nowrap; }
+      /* Документный лист: чуть крупнее и просторнее, структура прежняя. */
+      .ds-sheet { font-size: 14px; }
+      .ds-table th { padding: 7px 9px; font-size: 12px; }
+      .ds-table td { padding: 7px 9px; font-size: 13px; }
+      .ds-sec-head { padding: 8px 12px; }
+      .ds-sec-body { padding: 12px; }
+      .ds-ctrl { opacity: .45; }
+      .ds-row:hover .ds-ctrl, .ds-item:hover .ds-ctrl { opacity: 1; }
+      .ds-title h2 { font-size: 20px; }
+      /* Карточки слотов: читаемая таблица характеристик вместо микроскопического масштаба. */
+      .roster-card .rc-table { width: 100%; border-collapse: collapse; font: 11px/1.3 var(--mono); text-align: center; }
+      .roster-card .rc-table th { border: 1px solid var(--border); padding: 3px 2px; color: var(--muted); font-weight: 500; font-size: 10px; }
+      .roster-card .rc-table td { border: 1px solid var(--border); padding: 4px 2px; color: var(--cyan); font-weight: 700; }
+      .roster-card .rc-rules { margin-top: 6px; font-size: 11px; color: var(--text); line-height: 1.4; }
+      .roster-card .rc-rules b { color: var(--cyan); }
+      .roster-card .rc-tags { margin-top: 4px; font-size: 10px; color: var(--muted); }
     </style>
   </head>
   <body>
@@ -13860,6 +13897,129 @@ renderChar = function () {
     return;
   }
   renderCharPrev6();
+};
+
+/* =====================================================================
+   Iteration 7 — фикс «скомканного» отображения во всех вкладках.
+   Причина 1: рамки блоков ниже, чем заголовок (28px) + содержимое, поэтому
+   текст и числа обрезаются. Причина 2: в многоколоночных слотах шаблон
+   сжимается до микроскопического масштаба. Причина 3: оболочка прятала
+   имена на ноутбуках (CSS выше).
+   Решение: (a) авторасширение рамок под содержимое + вертикальная
+   раскладка без налезаний; (b) читаемые карточки слотов; всё локально.
+   ===================================================================== */
+const FIT_LEAF = ["text","number","stat","bar","tags","table","ability","divider","image","field","modifier","condition","constraint"];
+function reflowVertical(sp){
+  for(const c of sp.nodes.filter(n=>CONTAINERS.includes(n.kind))){
+    const mode=c.layoutMode||c.props.layoutMode;
+    if(['flow','grid'].includes(mode)) continue;
+    const kids=sp.nodes.filter(k=>k.parent===c.id&&!k.hidden).sort((a,b)=>a.frame.y-b.frame.y||a.frame.x-b.frame.x);
+    if(!kids.length) continue;
+    const pad=+c.props.padding||0, gap=Math.max(4,+c.props.gap||8);
+    let cursor=(c.kind==='slot'?40:32)+pad;
+    for(const k of kids){ if(k.frame.y<cursor) k.frame.y=cursor; cursor=k.frame.y+k.frame.h+gap; }
+  }
+}
+function fitSpaceFrames(sp){
+  if(!sp||!Array.isArray(sp.nodes)) return;
+  const leaves=sp.nodes.filter(n=>FIT_LEAF.includes(n.kind)&&!n.hidden);
+  if(!leaves.length){ reflowVertical(sp); autoLayout(sp); return; }
+  const host=document.createElement('div');
+  host.style.cssText='position:absolute;left:-100000px;top:0;width:0;height:0;overflow:hidden;visibility:hidden;';
+  document.body.appendChild(host);
+  const items=[];
+  try{
+    for(const n of leaves){
+      let el;
+      try{ const s=nodeSchema(n); el=buildNodeEl(n,sp,objectsOfSchema(s)[0]||null,true); }catch(e){ continue; }
+      el.style.position='relative'; el.style.left='0'; el.style.top='0';
+      el.style.width=n.frame.w+'px'; el.style.height='auto';
+      const body=el.querySelector('.n-body'); if(body){ body.style.height='auto'; body.style.overflow='visible'; }
+      host.appendChild(el); items.push({n,el});
+    }
+    for(const {n,el} of items){
+      const head=el.querySelector('.n-head'), body=el.querySelector('.n-body');
+      const need=(head?head.offsetHeight:0)+(body?body.scrollHeight:0)+2;
+      if(need>n.frame.h) n.frame.h=need;
+    }
+  } finally { host.remove(); }
+  reflowVertical(sp); autoLayout(sp); reflowVertical(sp); autoLayout(sp);
+}
+function fitAllSpaces(){
+  try{ state.model.schemas.forEach(fitSpaceFrames); state.model.layouts.forEach(fitSpaceFrames); }
+  catch(e){ console.warn('Iteration 7 fit:', e); }
+}
+/* Читаемая таблица характеристик для карточки слота (когда масштаб был бы мелким). */
+function rcStatTable(s,o,a,max){
+  const costRe=/стоимость|cost|points|очк/i;
+  const fs=s.fields.filter(f=>!f.removed&&(f.type==='number'||f.type==='calc')&&!costRe.test(f.name)).slice(0,max);
+  const head=fs.map(f=>`<th>${esc(f.name)}</th>`).join('');
+  const cells=fs.map(f=>`<td data-live-field="${esc(f.name)}" data-s="${s.id}" data-o="${o.id}">${esc(displayValue(s,o,f.name))}</td>`).join('');
+  const texts=s.fields.filter(f=>!f.removed&&f.type==='text'&&f.name!=='Имя').map(f=>displayValue(s,o,f.name)).filter(v=>v&&v!=='—');
+  const rules=texts.length?`<div class="rc-rules">${texts.map(t=>esc(t)).join(' · ')}</div>`:'';
+  const tags=o.tags.length?`<div class="rc-tags">${esc(o.tags.join(', '))}</div>`:'';
+  return `<table class="rc-table"><tr>${head}</tr><tr>${cells}</tr></table>${rules}${tags}`;
+}
+function slotCardHeight(n,s,o,a){
+  if(!o||!s) return 45;
+  const notes=a&&a.notes?22:0;
+  const compact=n.props.view==='compact'||state.ui.compact;
+  const cols=clamp(+n.props.cols||1,1,8), gap=+n.props.gap||8;
+  const width=(n.frame.w-16-gap*(cols-1))/cols;
+  if(compact) return 120+notes;
+  const visual=s.nodes.filter(x=>VISUAL.includes(x.kind)&&!x.hidden);
+  if(!visual.length) return 150+notes;
+  const frames=visual.map(nd=>worldFrame(nd,s));
+  const sx=Math.min(...frames.map(f=>f.x));
+  const maxW=Math.max(100,...visual.map((nd,i)=>frames[i].x+nd.frame.w))-sx;
+  const scale=Math.min(1,Math.max(40,width-20)/maxW);
+  if(scale>=0.85){
+    const sy=Math.min(...frames.map(f=>f.y));
+    const maxH=Math.max(70,...visual.map((nd,i)=>frames[i].y+nd.frame.h))-sy;
+    return Math.ceil(maxH*scale)+76+notes;
+  }
+  return 168+notes;
+}
+function renderedSlotCard(s,o,a,n,index,width,interactive){
+  const compact=n.props.view==='compact'||state.ui.compact;
+  let content='';
+  const visual=s.nodes.filter(x=>VISUAL.includes(x.kind)&&!x.hidden);
+  let scale=1;
+  if(!compact&&visual.length){
+    const frames=visual.map(nd=>worldFrame(nd,s));
+    const sx=Math.min(...frames.map(f=>f.x));
+    const maxW=Math.max(100,...frames.map((v,i)=>v.x+visual[i].frame.w))-sx;
+    scale=Math.min(1,Math.max(40,width-20)/maxW);
+  }
+  if(compact){ content=rcStatTable(s,o,a,10); }
+  else if(!visual.length){ content=renderSchemaCard(s,o); }
+  else if(scale<0.85){ content=rcStatTable(s,o,a,14); }
+  else {
+    const frames=visual.map(nd=>({nd,f:worldFrame(nd,s)}));
+    const sx=Math.min(...frames.map(v=>v.f.x)), sy=Math.min(...frames.map(v=>v.f.y));
+    const maxW=Math.max(100,...frames.map(v=>v.f.x+v.nd.frame.w))-sx;
+    const maxH=Math.max(70,...frames.map(v=>v.f.y+v.nd.frame.h))-sy;
+    const inner=document.createElement('div');
+    inner.className='template-card';
+    inner.style.cssText=`position:relative;width:${maxW}px;height:${maxH}px;transform:scale(${scale});transform-origin:0 0;`;
+    frames.forEach(({nd,f})=>{ if(!visibleNode(nd,s,o))return; const el=buildNodeEl(nd,s,o,true);
+      el.style.left=f.x-sx+'px'; el.style.top=f.y-sy+'px'; el.style.width=nd.frame.w+'px'; el.style.height=nd.frame.h+'px'; inner.appendChild(el); });
+    const wrap=document.createElement('div');
+    wrap.className='template-scale-wrap';
+    wrap.style.cssText=`position:relative;width:100%;height:${Math.ceil(maxH*scale)}px;overflow:hidden;`;
+    wrap.appendChild(inner); content=wrap.outerHTML;
+  }
+  return `<div class="roster-card ${compact?'compact':''}" draggable="${interactive}" data-assignment="${a.id}" data-slot="${n.id}" data-index="${index}" data-object="${o.id}" data-schema="${s.id}"><div class="roster-card-head"><b>${esc(a.alias||o.name)}</b><span class="count-badge">×${a.count}</span>${interactive?'<button data-act="edit" title="Имя и заметка экземпляра">✎</button><button data-act="dec" aria-label="Уменьшить количество">−</button><button data-act="inc" aria-label="Увеличить количество">＋</button><button data-act="rm" aria-label="Удалить">×</button>':''}</div><div class="roster-card-content">${content}</div><div class="roster-card-foot"><span>${esc(o.tags.join(' · '))}</span><b>${objectCost(o,a.count)} оч.</b></div>${a.notes?`<p class="instance-note">${esc(a.notes)}</p>`:''}</div>`;
+}
+/* Подгоняем рамки один раз на каждую модель (загрузка, импорт, откат). */
+const fittedModels7 = new WeakSet();
+const refreshPrev7 = refresh;
+refresh = function(){
+  if(state.model && !fittedModels7.has(state.model)){
+    fittedModels7.add(state.model);
+    fitAllSpaces(); layoutAll();
+  }
+  refreshPrev7();
 };
 
       try { initialize(); }
